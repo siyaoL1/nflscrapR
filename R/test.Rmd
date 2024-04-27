@@ -1,0 +1,173 @@
+```{r}
+install.packages("dplyr")
+install.packages("magrittr")
+install.packages("assertthat")
+
+install.packages("remotes")
+remotes::install_version("scrapeR", version = "0.1.6")
+```
+
+```{r}
+library(dplyr)
+library(assertthat)
+library(scrapeR)
+sessionInfo()
+```
+
+This doesn't work...
+```{r}
+season <- 2018
+type = "reg"
+weeks = NULL
+teams = NULL
+
+source("scrape_games_and_urls.R")
+# Gather the game ids based on the inputs:
+game_ids <- scrape_game_ids(season, type, weeks, teams) %>%
+  # Remove the pre-season games that were broken in the NFL API:
+  dplyr::filter(!(game_id %in% c(2014081503, 2016080751))) %>%
+  dplyr::pull(game_id)
+```
+
+Here's the actual code inside scrape_game_ids() function：
+```{r}
+  # First check that the type is one of the required options:
+  assertthat::assert_that(tolower(type) %in% c("reg", "pre", "post"),
+                          msg = "Input for type is not valid! Should either be 'reg', 'pre', or 'post'.")
+  
+  # Next check that if the type is pre then the season is at least 1999:
+  if (tolower(type) == "pre") {
+    assertthat::assert_that(as.numeric(season) >= 2000,
+                            msg = "Preseason game ids with data are only available starting in 2000!")
+    # Otherwise check to see that it's at least 1998
+  } else {
+    assertthat::assert_that(as.numeric(season) >= 1998,
+                            msg = "Regular and post-season game ids with data are only available starting in 1998!")
+  }
+  
+  # Change the weeks from NULL if type is either pre or reg to their default values
+  # (catching the case for 2011)
+  
+  if (is.null(weeks) & tolower(type) == "pre" & season != 2011) {
+    weeks <- 0:4
+  }
+  if (is.null(weeks) & tolower(type) == "pre" & season == 2011) {
+    weeks <- 1:4
+  }
+  if (is.null(weeks) & tolower(type) == "reg") {
+    weeks <- 1:17
+  }
+  
+  # Print out a message if the user entired values for weeks but for post type:
+  if (!is.null(weeks) & tolower(type) == "post") {
+    print("Ignoring the weeks input given the selected post-season game type.")
+  }
+  
+  # Next check to see that if the type is pre then all of the weeks are between
+  # 0 to 4, or 1 to 4 if season is 2011:
+  if (tolower(type) == "pre" & season != 2011) {
+    assertthat::assert_that(all(weeks >= 0) & all(weeks <= 4),
+                            msg = "Please enter appropriate values for the pre-season weeks input between 0 to 4!")
+  }
+  if (tolower(type) == "pre" & season == 2011) {
+    assertthat::assert_that(all(weeks >= 1) & all(weeks <= 4),
+                            msg = "Please enter appropriate values for the 2011 pre-season weeks input between 1 to 4!")
+  }
+  
+  # For regular season between 1 and 17:
+  if (tolower(type) == "reg") {
+    assertthat::assert_that(all(weeks >= 1) & all(weeks <= 17),
+                            msg = "Please enter appropriate values for the regular season weeks input between 1 to 17!")
+  }
+  
+  # Construct base schedule url for the season and type:
+  base_url_schedule <- paste("http://www.nfl.com/schedules", season,
+                             toupper(type), sep = "/")
+
+```
+
+```{r}
+  # Define the pipeline that will be used for type of games to scrape:
+  
+  fetch_game_ids <- . %>%
+    scrapeR::scrape(url = ., headers = TRUE, parse = FALSE) %>%
+    unlist() %>%
+    stringr::str_extract_all("data-gameid=\"[0-9]{10}\"") %>%
+    unlist() %>%
+    stringr::str_extract("[0-9]{10}") %>%
+    unlist()
+  
+  # Pipeline to get away team abbreviations:
+  fetch_away_team_id <- . %>%
+    scrapeR::scrape(url = ., headers = TRUE, parse = FALSE) %>%
+    unlist() %>%
+    stringr::str_extract_all("data-away-abbr=\"[:upper:]{2,3}\"") %>%
+    unlist() %>%
+    stringr::str_extract("[:upper:]{2,3}") %>%
+    unlist()
+```
+
+```{r}
+# Home team abbreviations:
+  fetch_home_team_id <- . %>%
+    scrapeR::scrape(url = ., headers = TRUE, parse = FALSE) %>%
+    unlist() %>%
+    stringr::str_extract_all("data-home-abbr=\"[:upper:]{2,3}\"") %>%
+    unlist() %>%
+    stringr::str_extract("[:upper:]{2,3}") %>%
+    unlist()
+  
+  # Pipeline to fetch state of game:
+  fetch_gamestate <- . %>%
+    scrapeR::scrape(url = ., headers = TRUE, parse = FALSE) %>%
+    unlist() %>%
+    stringr::str_extract_all("data-gamestate=\"[:upper:]{2,4}\"") %>%
+    unlist() %>%
+    stringr::str_extract("[:upper:]{2,4}") %>%
+    unlist()
+```
+
+```{r}
+
+  # If the type is post then just gather all the game ids from the post season
+  # schedule page (since they are not separated by the week unlike the pre or
+  # regular season) and put them together in data frame with week as 18 for now:
+  
+
+    playoff_game_ids <- base_url_schedule %>%
+      fetch_game_ids
+    
+    playoff_game_home <- base_url_schedule %>%
+      fetch_home_team_id
+    playoff_game_away <- base_url_schedule %>%
+      fetch_away_team_id
+    playoff_gamestate <- base_url_schedule %>%
+      fetch_gamestate
+    
+    game_ids_df <- data.frame("game_id" = playoff_game_ids,
+                              "week" = rep(18, length(playoff_game_ids)),
+                              "home_team" = playoff_game_home,
+                              "away_team" = playoff_game_away,
+                              "state_of_game" = playoff_gamestate)
+
+```
+
+There's bug at this line:
+```{r}
+scrapeR::scrape(url = base_url_schedule, headers = TRUE, parse = FALSE)
+```
+
+Here's the inner code from the scrapeR::scrape() function, somehow it works just fine.
+```{r}
+source = base_url_schedule
+headers<-sapply(sapply(source,substr,start=1,stop=10000),gsub,pattern="(.+)\r\n\r\n+<.+",replacement="\\1")
+```
+
+```{r}
+cat(headers)
+```
+
+```{r}
+headers<-strsplit(headers,"\r\n")
+```
+
