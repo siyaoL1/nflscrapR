@@ -152,7 +152,7 @@ Here's the actual code inside scrape_game_ids() function：
 
 ```
 
-There's bug at this line:
+There's bug at this line inside fetch_game_ids():
 ```{r}
 scrapeR::scrape(url = base_url_schedule, headers = TRUE, parse = FALSE)
 ```
